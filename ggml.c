@@ -4065,7 +4065,7 @@ struct ggml_context * ggml_init(struct ggml_init_params params) {
 #endif
 
 #if defined(GGML_USE_SYCL)
-        ggml_cycl_init();
+        ggml_sycl_init();
 #endif
 
         is_first_call = false;
@@ -10230,6 +10230,14 @@ static void ggml_compute_forward_mul_mat_f16_f32(
             ggml_cl_mul_mat(src0, src1, dst, params->wdata, params->wsize);
         }
         return;
+    }
+#endif
+
+#if defined(GGML_USE_SYCL)
+    if (params->ith == 0 && params->type == GGML_TASK_COMPUTE) {
+        if (ggml_sycl_mul_mat(src0, src1, dst, params->wdata, params->wsize)) {
+            return;
+        }
     }
 #endif
 
