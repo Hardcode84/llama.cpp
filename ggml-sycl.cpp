@@ -35,8 +35,7 @@ struct LocalContext;
 struct Context {
     Context() {
         // TODO: Unhardcode deivce
-        // device = sycl::device{getDeviceSelector("level_zero:gpu:0")};
-        device = sycl::device{getDeviceSelector("opencl:cpu:0")};
+        device = sycl::device{getDeviceSelector("level_zero:gpu:0")};
         queue = sycl::queue{device};
     }
 
@@ -148,13 +147,12 @@ extern "C" bool ggml_sycl_mul_mat(const struct ggml_tensor * src0, const struct 
     return false;
 }
 
-
 template<typename Src, typename Dst>
 static sycl::event convertType2d(sycl::queue queue, const void* src, void* dst, int64_t ne00, int64_t ne01, int64_t nb00, int64_t nb01) {
     auto dstTyped = static_cast<Dst*>(dst);
     return queue.submit([&](sycl::handler& h) {
         sycl::range<2> r{ne00, ne01};
-        h.parallel_for<class type_convert>(r, [=](sycl::item<2> idx) {
+        h.parallel_for(r, [=](sycl::item<2> idx) {
             auto i00 = idx.get_id(0);
             auto i01 = idx.get_id(1);
             auto dstId = i00 + i01 * ne00;
