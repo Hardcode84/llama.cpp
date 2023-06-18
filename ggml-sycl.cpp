@@ -62,6 +62,7 @@ struct LocalContext {
             return scratch;
 
         freeScratch();
+        printf("malloc device %d\n", (int)size);
         scratch = sycl::malloc_device(size, queue);
         if (!scratch) {
             fprintf(stderr, "SYCL: Failed to allocate scratch memory\n");
@@ -157,10 +158,12 @@ extern "C" void* ggml_sycl_alloc_shared(size_t size) {
         fprintf(stderr, "SYCL: Failed to allocate shared memory\n");
         abort();
     }
+    printf("ggml_sycl_alloc_shared %d %p\n", (int)size, mem);
     return mem;
 }
 
 extern "C" void ggml_sycl_free(void* ptr) {
+    printf("ggml_sycl_free %p\n", ptr);
     if (ptr) {
         sycl::free(ptr, getContext().queue);
     }
@@ -206,7 +209,7 @@ static bool checkStrides(const ggml_tensor * tensor) {
 }
 
 static bool matmul_f16_f32_f32(Context& ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, void * wdata, size_t wsize) {
-    printf("matmul_f16_f32_f32 %d\n", (int)checkStrides(src0));
+    // printf("matmul_f16_f32_f32 %d\n", (int)checkStrides(src0));
     if (!checkStrides(src0))
         return false;
 
@@ -243,10 +246,10 @@ static bool matmul_f16_f32_f32(Context& ctx, const ggml_tensor * src0, const ggm
     const int64_t scratchLocalSize = ne00 * ne01 * sizeof(sycl::half);
     const int64_t scratchSize = scratchLocalSize * ne02 * ne03;
 
-    printf("matmul_f16_f32_f32 1\n"); fflush(stdout);
+    // printf("matmul_f16_f32_f32 1\n"); fflush(stdout);
 
     LocalContextGuard g(ctx);
-    printf("matmul_f16_f32_f32 2\n"); fflush(stdout);
+    // printf("matmul_f16_f32_f32 2\n"); fflush(stdout);
     auto &queue = g.lctx->queue;
     auto &deps = g.lctx->deps;
     auto scratch = (char *) g.lctx->getScratch(scratchSize);
@@ -255,10 +258,10 @@ static bool matmul_f16_f32_f32(Context& ctx, const ggml_tensor * src0, const ggm
             auto x = (sycl::half *) ((char *) src0->data + i03*nb03 + i02*nb02);
             auto y = (float *) ((char *) src1->data + i02*nb12 + i03*nb13);
             auto sc = (sycl::half *) (scratch + scratchLocalSize * i02 + ne02 * scratchLocalSize);
-            printf("matmul_f16_f32_f32 3\n"); fflush(stdout);
+            // printf("matmul_f16_f32_f32 3\n"); fflush(stdout);
             deps.clear();
             deps.emplace_back(convertType2d<float, sycl::half>(queue, y, sc, ne10, ne11, nb10, nb11));
-            printf("matmul_f16_f32_f32 4\n"); fflush(stdout);
+            // printf("matmul_f16_f32_f32 4\n"); fflush(stdout);
 
             float * d = (float *) ((char *) dst->data + i02*nb2 + i03*nb3);
             namespace blas = oneapi::mkl::blas::row_major;
@@ -270,11 +273,11 @@ static bool matmul_f16_f32_f32(Context& ctx, const ggml_tensor * src0, const ggm
                          x, ne00,
                 0.0f,    d, ne01,
                 deps);
-            printf("matmul_f16_f32_f32 5\n"); fflush(stdout);
+            // printf("matmul_f16_f32_f32 5\n"); fflush(stdout);
         }
     }
-    printf("matmul_f16_f32_f32 6\n"); fflush(stdout);
+    // printf("matmul_f16_f32_f32 6\n"); fflush(stdout);
     queue.wait();
-    printf("matmul_f16_f32_f32 7\n"); fflush(stdout);
+    // printf("matmul_f16_f32_f32 7\n"); fflush(stdout);
     return true;
 }
