@@ -166,6 +166,11 @@ inline static void* ggml_aligned_malloc(size_t size) {
 #include "ggml-opencl.h"
 #endif
 
+#if defined(GGML_USE_SYCL)
+#include "ggml-sycl.h"
+#endif
+
+
 #undef MIN
 #undef MAX
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
@@ -4057,6 +4062,10 @@ struct ggml_context * ggml_init(struct ggml_init_params params) {
         ggml_init_cublas();
 #elif defined(GGML_USE_CLBLAST)
         ggml_cl_init();
+#endif
+
+#if defined(GGML_USE_SYCL)
+        ggml_cycl_init();
 #endif
 
         is_first_call = false;
