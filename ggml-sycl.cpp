@@ -123,11 +123,15 @@ struct LocalContextGuard {
 }
 
 static Context* context = nullptr;
+static Context& getContext() {
+    assert(context && "Context is not initialized");
+    return *context;
+}
 
 extern "C" void ggml_sycl_init() {
-    printf("ggml_cycl_init\n");
+    printf("ggml_sycl_init\n");
+    assert(!context && "Context is already initialized");
     catchAll([&]() {
-        assert(!context && "Context is already initialized");
         context = new Context;
     });
 }
@@ -141,10 +145,45 @@ extern "C" bool ggml_sycl_mul_mat(const struct ggml_tensor * src0, const struct 
             return src0->type == a && src1->type == b && dst->type == c;
         };
 #define T(a) GGML_TYPE_##a
-    if (checkTypes(T(F16), T(F32), T(F32))) return matmul_f16_f32_f32(*context, src0, src1, dst, wdata, wsize);
+    if (checkTypes(T(F16), T(F32), T(F32))) return matmul_f16_f32_f32(getContext(), src0, src1, dst, wdata, wsize);
 #undef T
     });
     return false;
+}
+
+extern "C" void* ggml_sycl_alloc_shared(size_t size) {
+    auto mem = sycl::malloc_shared(size, getContext().queue);
+    if (!mem) {
+        fprintf(stderr, "SYCL: Failed to allocate shared memory\n");
+        abort();
+    }
+    return mem;
+}
+
+extern "C" void ggml_sycl_free(void* ptr) {
+    if (ptr) {
+        sycl::free(ptr, getContext().queue);
+    }
+}
+
+extern "C" void ggml_sycl_transform_tensor(void * data, struct ggml_tensor * tensor) {
+    printf("ggml_sycl_transform_tensor\n");
+    const int64_t ne0 = tensor->ne[0];
+    const int64_t ne1 = tensor->ne[1];
+    const int64_t ne2 = tensor->ne[2];
+    const int64_t ne3 = tensor->ne[3];
+
+    const ggml_type type = tensor->type;
+    const size_t size = ggml_type_size(type) * ne0 * ne1 * ne2 * ne3 / ggml_blck_size(type);
+
+    auto &ctx = getContext();
+    auto mem = sycl::malloc_shared(size, ctx.queue);
+    if (!mem) {
+        fprintf(stderr, "SYCL: Failed to allocate shared memory\n");
+        abort();
+    }
+
+    tensor->data = mem;
 }
 
 template<typename Src, typename Dst>

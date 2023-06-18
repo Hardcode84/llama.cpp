@@ -16,6 +16,10 @@
 #include <vector>
 #include <stdexcept>
 
+#if GGML_USE_SYCL
+#include "ggml-sycl.h"
+#endif
+
 #ifdef __has_include
     #if __has_include(<unistd.h>)
         #include <unistd.h>
@@ -414,6 +418,9 @@ struct llama_buffer {
         else {
             addr = NULL;
         }
+#elif GGML_USE_SYCL
+        ggml_sycl_free(addr);
+        addr = (uint8_t*) ggml_sycl_alloc_shared(len);
 #else
         delete[] addr;
         addr = new uint8_t[len];
@@ -424,6 +431,8 @@ struct llama_buffer {
     ~llama_buffer() {
 #ifdef GGML_USE_METAL
         free(addr);
+#elif GGML_USE_SYCL
+        ggml_sycl_free(addr);
 #else
         delete[] addr;
 #endif

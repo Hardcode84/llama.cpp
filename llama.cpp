@@ -16,6 +16,10 @@
 #include "ggml-opencl.h"
 #endif
 
+#if defined(GGML_USE_SYCL)
+#include "ggml-sycl.h"
+#endif
+
 #ifdef GGML_USE_METAL
 #include "ggml-metal.h"
 #endif
@@ -785,12 +789,21 @@ struct llama_model_loader {
 
             switch(lt.ggml_tensor->backend) {
                 case GGML_BACKEND_CPU:
+#if defined(GGML_USE_SYCL)
+                    ggml_sycl_transform_tensor(lt.data, lt.ggml_tensor);
+                    if (!use_mmap) {
+                        free(lt.data);
+                    }
+                    break;
+#else
                     lt.ggml_tensor->data = lt.data;
                     if (use_mmap && lmlock) {
                         lock_size += lt.size;
                         lmlock->grow_to(lock_size);
                     }
                     break;
+#endif
+
 #if defined(GGML_USE_CUBLAS)
                 case GGML_BACKEND_GPU:
                 case GGML_BACKEND_GPU_SPLIT:
@@ -807,6 +820,7 @@ struct llama_model_loader {
                     }
                     break;
 #endif
+
                 default:
                     continue;
             }
