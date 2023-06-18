@@ -73,6 +73,7 @@ set(LLAMA_CUDA_DMMV_Y       "1" CACHE STRING "llama: y block size for dmmv CUDA 
 set(LLAMA_CUDA_KQUANTS_ITER "2" CACHE STRING "llama: iters./thread per block for Q2_K/Q6_K")
 option(LLAMA_CLBLAST                         "llama: use CLBlast"                               OFF)
 option(LLAMA_METAL                           "llama: use Metal"                                 OFF)
+option(LLAMA_SYCL                            "llama: use SYCL"                                  OFF)
 option(LLAMA_K_QUANTS                        "llama: use k-quants"                              ON)
 
 option(LLAMA_BUILD_TESTS                "llama: build tests"    ${LLAMA_STANDALONE})
@@ -222,6 +223,28 @@ if (LLAMA_BLAS)
         "https://cmake.org/cmake/help/latest/module/FindBLAS.html#blas-lapack-vendors"
         " to set correct LLAMA_BLAS_VENDOR")
     endif()
+endif()
+
+if (LLAMA_SYCL)
+    if (NOT DEFINED(MKL_THREADING))
+        set(MKL_THREADING tbb_thread)
+    endif()
+    if (NOT DEFINED(MKL_LINK))
+        if (LLAMA_STATIC)
+            set(MKL_LINK static)
+        else()
+            set(MKL_LINK dynamic)
+        endif()
+    endif()
+
+    find_package(MKL CONFIG REQUIRED)
+
+    set(GGML_SOURCES_SYCL ggml-sycl.cpp ggml-sycl.h)
+    add_compile_definitions(GGML_USE_SYCL)
+
+    set(LLAMA_EXTRA_LIBS ${LLAMA_EXTRA_LIBS} $<LINK_ONLY:MKL::MKL>)
+    set(LLAMA_EXTRA_INCLUDES ${LLAMA_EXTRA_INCLUDES} $<TARGET_PROPERTY:MKL::MKL,INTERFACE_INCLUDE_DIRECTORIES>)
+    set(LLAMA_EXTRA_OPTIONS ${LLAMA_EXTRA_OPTIONS} $<TARGET_PROPERTY:MKL::MKL,INTERFACE_COMPILE_OPTIONS>)
 endif()
 
 if (LLAMA_CUBLAS)
@@ -454,12 +477,14 @@ add_library(ggml OBJECT
             ${GGML_SOURCES_CUDA}
             ${GGML_SOURCES_OPENCL}
             ${GGML_SOURCES_METAL}
+            ${GGML_SOURCES_SYCL}
             ${GGML_SOURCES_EXTRA}
             )
 
 target_include_directories(ggml PUBLIC . ${LLAMA_EXTRA_INCLUDES})
 target_compile_features(ggml PUBLIC c_std_11) # don't bump
 target_link_libraries(ggml PUBLIC Threads::Threads ${LLAMA_EXTRA_LIBS})
+target_compile_options(ggml PUBLIC ${LLAMA_EXTRA_OPTIONS})
 
 add_library(ggml_static STATIC $<TARGET_OBJECTS:ggml>)
 if (BUILD_SHARED_LIBS)
