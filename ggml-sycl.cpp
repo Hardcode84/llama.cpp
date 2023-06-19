@@ -181,7 +181,7 @@ extern "C" void ggml_sycl_free(void* ptr) {
 }
 
 extern "C" void ggml_sycl_transform_tensor(void * data, struct ggml_tensor * tensor) {
-    printf("ggml_sycl_transform_tensor\n");
+    // printf("ggml_sycl_transform_tensor\n");
     const int64_t ne0 = tensor->ne[0];
     const int64_t ne1 = tensor->ne[1];
     const int64_t ne2 = tensor->ne[2];
@@ -254,25 +254,22 @@ static bool matmul_f16_f32_f32(Context& ctx, const ggml_tensor * src0, const ggm
     const int nb2  = dst->nb[2];
     const int nb3  = dst->nb[3];
 
-    const int64_t scratchLocalSize = ne00 * ne01 * sizeof(sycl::half);
+    const int64_t scratchLocalSize = ne10 * ne11 * sizeof(sycl::half);
     const int64_t scratchSize = scratchLocalSize * ne02 * ne03;
 
-    // printf("matmul_f16_f32_f32 1\n"); fflush(stdout);
-
     LocalContextGuard g(ctx);
-    // printf("matmul_f16_f32_f32 2\n"); fflush(stdout);
     auto &queue = g.lctx->queue;
     auto &deps = g.lctx->deps;
+    assert(deps.empty());
+
     auto scratch = (char *) g.lctx->getScratch(scratchSize);
     for (int64_t i03 = 0; i03 < ne03; i03++) {
         for (int64_t i02 = 0; i02 < ne02; i02++) {
-            auto x = (sycl::half *) ((char *) src0->data + i03*nb03 + i02*nb02);
-            auto y = (float *) ((char *) src1->data + i02*nb12 + i03*nb13);
-            auto sc = (sycl::half *) (scratch + scratchLocalSize * i02 + ne02 * scratchLocalSize);
-            // printf("matmul_f16_f32_f32 3\n"); fflush(stdout);
-            deps.clear();
+            auto x  = (sycl::half *) ((char *) src0->data + i02*nb02 + i03*nb03);
+            auto y  =      (float *) ((char *) src1->data + i02*nb12 + i03*nb13);
+            auto sc = (sycl::half *) (scratch + i02*scratchLocalSize + i03*ne02*scratchLocalSize);
+
             deps.emplace_back(convertType2d<float, sycl::half>(queue, y, sc, ne10, ne11, nb10, nb11));
-            // printf("matmul_f16_f32_f32 4\n"); fflush(stdout);
 
             float * d = (float *) ((char *) dst->data + i02*nb2 + i03*nb3);
             namespace blas = oneapi::mkl::blas::row_major;
@@ -284,11 +281,9 @@ static bool matmul_f16_f32_f32(Context& ctx, const ggml_tensor * src0, const ggm
                          x, ne00,
                 0.0f,    d, ne01,
                 deps);
-            // printf("matmul_f16_f32_f32 5\n"); fflush(stdout);
+            deps.clear();
         }
     }
-    // printf("matmul_f16_f32_f32 6\n"); fflush(stdout);
     queue.wait();
-    // printf("matmul_f16_f32_f32 7\n"); fflush(stdout);
     return true;
 }
