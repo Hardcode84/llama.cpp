@@ -169,7 +169,6 @@ extern "C" bool ggml_sycl_mul_mat(const struct ggml_tensor * src0, const struct 
 }
 
 extern "C" void* ggml_sycl_alloc_shared(size_t size, size_t align) {
-    printf("ggml_sycl_alloc_shared %d %d", (int)size, (int)align);
     size = std::max(std::max(size, align), (size_t) 1);
 
     void* mem;
@@ -184,12 +183,10 @@ extern "C" void* ggml_sycl_alloc_shared(size_t size, size_t align) {
         fprintf(stderr, "SYCL: Failed to allocate shared memory: %d %d\n", (int)size, (int)align);
         abort();
     }
-    printf(" %p\n", mem);
     return mem;
 }
 
 extern "C" void ggml_sycl_free(void* ptr) {
-    printf("ggml_sycl_free %p\n", ptr);
     if (ptr) {
         sycl::free(ptr, getContext().queue);
     }
@@ -296,7 +293,7 @@ static bool matmul_f16_f32_f32(Context& ctx, const ggml_tensor * src0, const ggm
                 oneapi::mkl::transpose::T,
                 ne11, ne01, ne10,
                 1.0f,   sc, ne10,
-                         x, ne00,
+                         x, nb01 / sizeof(sycl::half),
                 0.0f,    d, ne01,
                 deps);
             deps.clear();
