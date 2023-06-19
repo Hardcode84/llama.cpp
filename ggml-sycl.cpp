@@ -196,7 +196,7 @@ extern "C" void ggml_sycl_free(void* ptr) {
 }
 
 extern "C" void ggml_sycl_transform_tensor(void * data, struct ggml_tensor * tensor) {
-    // printf("ggml_sycl_transform_tensor\n");
+    // printf("ggml_sycl_transform_tensor %d\n", (int)(ggml_is_contiguous(tensor)));
     const int64_t ne0 = tensor->ne[0];
     const int64_t ne1 = tensor->ne[1];
     const int64_t ne2 = tensor->ne[2];
@@ -206,13 +206,16 @@ extern "C" void ggml_sycl_transform_tensor(void * data, struct ggml_tensor * ten
     const size_t size = ggml_type_size(type) * ne0 * ne1 * ne2 * ne3 / ggml_blck_size(type);
 
     auto &ctx = getContext();
-    auto mem = sycl::malloc_shared(size, ctx.queue);
-    if (!mem) {
-        fprintf(stderr, "SYCL: Failed to allocate shared memory\n");
-        abort();
-    }
+    return catchAll([&]() {
+        auto mem = sycl::malloc_shared(size, ctx.queue);
+        if (!mem) {
+            fprintf(stderr, "SYCL: Failed to allocate shared memory\n");
+            abort();
+        }
+        ctx.queue.memcpy(mem, data, size).wait();
+        tensor->data = mem;
+    });
 
-    tensor->data = mem;
 }
 
 template<typename Src, typename Dst>
