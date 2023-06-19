@@ -30,6 +30,20 @@ template <typename F> static auto catchAll(F &&func) {
   }
 }
 
+static size_t nextPow2(size_t v) {
+    v--;
+    v |= v >> 1;
+    v |= v >> 2;
+    v |= v >> 4;
+    v |= v >> 8;
+    v |= v >> 16;
+    if (sizeof(v) > 4) {
+        v |= v >> 32;
+    }
+    v++;
+    return v;
+}
+
 
 namespace {
 struct LocalContext;
@@ -62,6 +76,7 @@ struct LocalContext {
         if (size <= scratchSize)
             return scratch;
 
+        size = nextPow2(size);
         freeScratch();
         printf("malloc device %d\n", (int)size);
         scratch = sycl::malloc_device(size, queue);
