@@ -420,7 +420,7 @@ struct llama_buffer {
         }
 #elif GGML_USE_SYCL
         ggml_sycl_free(addr);
-        addr = (uint8_t*) ggml_sycl_alloc_shared(len);
+        addr = (uint8_t*) ggml_sycl_alloc_shared(len, 0);
 #else
         delete[] addr;
         addr = new uint8_t[len];

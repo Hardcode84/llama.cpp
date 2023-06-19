@@ -1,6 +1,7 @@
 #include "ggml-sycl.h"
 
 #include <cstdio>
+#include <algorithm>
 #include <cassert>
 #include <atomic>
 #include <mutex>
@@ -141,24 +142,34 @@ static bool matmul_f16_f32_f32(Context& ctx, const ggml_tensor * src0, const ggm
 
 extern "C" bool ggml_sycl_mul_mat(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst, void * wdata, size_t wsize) {
     assert(context && "Context is not initialized");
-    catchAll([&]() {
+    return catchAll([&]() {
         auto checkTypes = [&](ggml_type a, ggml_type b, ggml_type c) {
             return src0->type == a && src1->type == b && dst->type == c;
         };
 #define T(a) GGML_TYPE_##a
     if (checkTypes(T(F16), T(F32), T(F32))) return matmul_f16_f32_f32(getContext(), src0, src1, dst, wdata, wsize);
 #undef T
+        return false;
     });
-    return false;
 }
 
-extern "C" void* ggml_sycl_alloc_shared(size_t size) {
-    auto mem = sycl::malloc_shared(size, getContext().queue);
+extern "C" void* ggml_sycl_alloc_shared(size_t size, size_t align) {
+    printf("ggml_sycl_alloc_shared %d %d", (int)size, (int)align);
+    size = std::max(std::max(size, align), (size_t) 1);
+
+    void* mem;
+    auto &queue = getContext().queue;
+    if (align == 0) {
+        mem = sycl::malloc_shared(size, queue);
+    } else {
+        mem = sycl::aligned_alloc_shared(align, size, queue);
+    }
+
     if (!mem) {
-        fprintf(stderr, "SYCL: Failed to allocate shared memory\n");
+        fprintf(stderr, "SYCL: Failed to allocate shared memory: %d %d\n", (int)size, (int)align);
         abort();
     }
-    printf("ggml_sycl_alloc_shared %d %p\n", (int)size, mem);
+    printf(" %p\n", mem);
     return mem;
 }
 

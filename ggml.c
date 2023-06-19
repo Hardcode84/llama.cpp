@@ -168,6 +168,15 @@ inline static void* ggml_aligned_malloc(size_t size) {
 
 #if defined(GGML_USE_SYCL)
 #include "ggml-sycl.h"
+
+#undef GGML_ALIGNED_MALLOC
+#undef GGML_ALIGNED_FREE
+
+inline static void* ggml_aligned_malloc_shared(size_t size) {
+    return ggml_sycl_alloc_shared(size, GGML_MEM_ALIGN);
+}
+#define GGML_ALIGNED_MALLOC(size)  ggml_aligned_malloc_shared(size)
+#define GGML_ALIGNED_FREE(ptr)     ggml_sycl_free(ptr)
 #endif
 
 
