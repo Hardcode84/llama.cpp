@@ -44,6 +44,41 @@ static size_t nextPow2(size_t v) {
     return v;
 }
 
+static void* check_ptr(void* ptr, size_t size, size_t align, const char* type) {
+    if (!ptr) {
+        fprintf(stderr, "SYCL: Failed to allocate %s memory: %zu %zu\n",
+                type, size, align);
+        abort();
+    }
+    return ptr;
+}
+
+static void* alloc_shared(sycl::queue& queue, size_t size, size_t align) {
+    size = std::max(std::max(size, align), (size_t) 1);
+
+    void* mem;
+    if (align == 0) {
+        mem = sycl::malloc_shared(size, queue);
+    } else {
+        mem = sycl::aligned_alloc_shared(align, size, queue);
+    }
+
+    return check_ptr(mem, size, align, "shared");
+}
+
+static void* alloc_device(sycl::queue& queue, size_t size, size_t align) {
+    size = std::max(std::max(size, align), (size_t) 1);
+
+    void* mem;
+    if (align == 0) {
+        mem = sycl::malloc_device(size, queue);
+    } else {
+        mem = sycl::aligned_alloc_device(align, size, queue);
+    }
+
+    return check_ptr(mem, size, align, "device");
+}
+
 
 namespace {
 struct LocalContext;
@@ -78,12 +113,7 @@ struct LocalContext {
 
         size = nextPow2(size);
         freeScratch();
-        scratch = sycl::malloc_device(size, queue);
-        if (!scratch) {
-            fprintf(stderr, "SYCL: Failed to allocate scratch memory\n");
-            abort();
-        }
-
+        scratch = alloc_device(queue, size, 0);
         scratchSize = size;
         return scratch;
     }
@@ -167,21 +197,7 @@ extern "C" bool ggml_sycl_mul_mat(const struct ggml_tensor * src0, const struct 
 }
 
 extern "C" void* ggml_sycl_alloc_shared(size_t size, size_t align) {
-    size = std::max(std::max(size, align), (size_t) 1);
-
-    void* mem;
-    auto &queue = getContext().queue;
-    if (align == 0) {
-        mem = sycl::malloc_shared(size, queue);
-    } else {
-        mem = sycl::aligned_alloc_shared(align, size, queue);
-    }
-
-    if (!mem) {
-        fprintf(stderr, "SYCL: Failed to allocate shared memory: %d %d\n", (int)size, (int)align);
-        abort();
-    }
-    return mem;
+    return alloc_shared(getContext().queue, size, align);
 }
 
 extern "C" void ggml_sycl_free(void* ptr) {
