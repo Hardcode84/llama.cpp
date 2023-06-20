@@ -183,18 +183,30 @@ extern "C" void ggml_sycl_init() {
     });
 }
 
-static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, void * wdata, size_t wsize);
+static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, bool dry_run);
 
-extern "C" bool ggml_sycl_mul_mat(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst, void * wdata, size_t wsize) {
+static bool ggml_sycl_mul_mat_impl(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst, bool dry_run) {
     return catch_all([&]() {
         auto checkTypes = [&](ggml_type a, ggml_type b, ggml_type c) {
             return src0->type == a && src1->type == b && dst->type == c;
         };
 #define T(a) GGML_TYPE_##a
-    if (checkTypes(T(F16), T(F32), T(F32))) return matmul_f16_f32_f32(get_context(), src0, src1, dst, wdata, wsize);
+    if (checkTypes(T(F16), T(F32), T(F32))) return matmul_f16_f32_f32(get_context(), src0, src1, dst, dry_run);
 #undef T
         return false;
     });
+}
+
+extern "C" bool ggml_sycl_can_mul_mat(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst) {
+    return ggml_sycl_mul_mat_impl(src0, src1, dst, true);
+}
+
+extern "C" void ggml_sycl_mul_mat(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst, void * wdata, size_t wsize) {
+    (void)wdata;
+    (void)wsize;
+    bool res = ggml_sycl_mul_mat_impl(src0, src1, dst, false);
+    (void)res;
+    assert(res);
 }
 
 extern "C" void* ggml_sycl_alloc_shared(size_t size, size_t align) {
@@ -266,11 +278,13 @@ static bool check_strides(const ggml_tensor * tensor) {
     return tensor->nb[0] == ggml_type_size(tensor->type);
 }
 
-static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, void * wdata, size_t wsize) {
+static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, bool dry_run) {
     // printf("matmul_f16_f32_f32 %d\n", (int)checkStrides(src0));
     if (!check_strides(src0))
         return false;
 
+    if (dry_run)
+        return true;
     const auto ne00 = src0->ne[0];
     const auto ne01 = src0->ne[1];
     const auto ne02 = src0->ne[2];

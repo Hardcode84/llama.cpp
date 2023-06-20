@@ -10243,10 +10243,11 @@ static void ggml_compute_forward_mul_mat_f16_f32(
 #endif
 
 #if defined(GGML_USE_SYCL)
-    if (params->ith == 0 && params->type == GGML_TASK_COMPUTE) {
-        if (ggml_sycl_mul_mat(src0, src1, dst, params->wdata, params->wsize)) {
-            return;
+    if (ggml_sycl_can_mul_mat(src0, src1, dst)) {
+        if (params->ith == 0 && params->type == GGML_TASK_COMPUTE) {
+            ggml_sycl_mul_mat(src0, src1, dst, params->wdata, params->wsize);
         }
+        return;
     }
 #endif
 
