@@ -10,8 +10,6 @@
 #include <CL/sycl.hpp>
 #include <oneapi/mkl.hpp>
 
-#define BATCH_GEMM 1
-
 static auto get_device_selector(std::string deviceName) {
   using Sel = sycl::ext::oneapi::filter_selector;
   return [selector = Sel(std::move(deviceName))](
@@ -238,22 +236,22 @@ extern "C" void ggml_sycl_transform_tensor(void * data, struct ggml_tensor * ten
 
 }
 
-template<typename Src, typename Dst>
-static sycl::event convert_type_2d(
-        sycl::queue queue, const void* src, void* dst,
-        int64_t ne00, int64_t ne01, int64_t nb00, int64_t nb01) {
-    auto dst_typed = static_cast<Dst*>(dst);
-    return queue.submit([&](sycl::handler& h) {
-        sycl::range<2> r{ne00, ne01};
-        h.parallel_for(r, [=](sycl::item<2> idx) {
-            auto i00 = idx.get_id(0);
-            auto i01 = idx.get_id(1);
-            auto dst_id = i00 + i01*ne00;
-            auto src_ptr = (const Src*) ((const char *) src + i00*nb00 + i01*nb01);
-            dst_typed[dst_id] = (Dst)*src_ptr;
-        });
-    });
-}
+// template<typename Src, typename Dst>
+// static sycl::event convert_type_2d(
+//         sycl::queue queue, const void* src, void* dst,
+//         int64_t ne00, int64_t ne01, int64_t nb00, int64_t nb01) {
+//     auto dst_typed = static_cast<Dst*>(dst);
+//     return queue.submit([&](sycl::handler& h) {
+//         sycl::range<2> r{ne00, ne01};
+//         h.parallel_for(r, [=](sycl::item<2> idx) {
+//             auto i00 = idx.get_id(0);
+//             auto i01 = idx.get_id(1);
+//             auto dst_id = i00 + i01*ne00;
+//             auto src_ptr = (const Src*) ((const char *) src + i00*nb00 + i01*nb01);
+//             dst_typed[dst_id] = (Dst)*src_ptr;
+//         });
+//     });
+// }
 
 template<typename Src, typename Dst>
 static sycl::event convert_type_3d(
@@ -367,7 +365,6 @@ static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, co
 
     // printf("%x\t%x\t", tensor_hash(src0), tensor_hash(src1));
 
-#if BATCH_GEMM
     const int64_t scratch_local_size = ne10 * ne11 * sizeof(sycl::half);
     const int64_t scratch_batch_size = scratch_local_size * ne02;
     const int64_t scratch_size = scratch_batch_size * ne03;
@@ -395,34 +392,7 @@ static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, co
             deps);
         deps.clear();
     }
-#else
-    const int64_t scratch_local_size = ne10 * ne11 * sizeof(sycl::half);
-    const int64_t scratch_size = scratch_local_size * ne02 * ne03;
-    auto scratch = (char *) g.lctx->get_scratch(scratch_size);
-    for (int64_t i03 = 0; i03 < ne03; i03++) {
-        for (int64_t i02 = 0; i02 < ne02; i02++) {
-            auto x  = (sycl::half *) ((char *) src0->data + i02*nb02 + i03*nb03);
-            auto y  =      (float *) ((char *) src1->data + i02*nb12 + i03*nb13);
-            auto sc = (sycl::half *) (scratch + i02*scratch_local_size + i03*ne02*scratch_local_size);
 
-            deps.emplace_back(
-                convert_type_2d<float, sycl::half>(queue, y, sc, ne10, ne11,
-                                                   nb10, nb11));
-
-            float * d = (float *) ((char *) dst->data + i02*nb2 + i03*nb3);
-            namespace blas = oneapi::mkl::blas::row_major;
-            blas::gemm(queue,
-                oneapi::mkl::transpose::N,
-                oneapi::mkl::transpose::T,
-                ne11, ne01, ne10,
-                1.0f,   sc, ne10,
-                         x, nb01 / sizeof(sycl::half),
-                0.0f,    d, ne01,
-                deps);
-            deps.clear();
-        }
-    }
-#endif
     queue.wait();
     // printf("%x\n", tensor_hash(dst));
     return true;
