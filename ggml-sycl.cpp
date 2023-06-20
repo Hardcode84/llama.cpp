@@ -219,11 +219,7 @@ extern "C" void ggml_sycl_transform_tensor(void * data, struct ggml_tensor * ten
 
     auto &ctx = get_context();
     return catch_all([&]() {
-        auto mem = sycl::malloc_shared(size, ctx.queue);
-        if (!mem) {
-            fprintf(stderr, "SYCL: Failed to allocate shared memory\n");
-            abort();
-        }
+        auto mem = alloc_shared(ctx.queue, size, 32);
         ctx.queue.memcpy(mem, data, size).wait();
         tensor->data = mem;
     });
