@@ -263,27 +263,24 @@ static sycl::event convert_type_3d(
     bool is_contigious = c1 && c2 && c3;
 
     auto dst_typed = static_cast<Dst*>(dst);
-    sycl::range<3> r{ne00, ne01, ne02};
     if (is_contigious) {
         auto src_typed = static_cast<const Src*>(src);
         return queue.submit([&](sycl::handler& h) {
-            h.parallel_for(r, [=](sycl::item<3> idx) {
-                auto i00 = idx.get_id(0);
-                auto i01 = idx.get_id(1);
-                auto i02 = idx.get_id(2);
-                auto dst_id = i00 + i01*ne00 + i02*ne00*ne01;
-                dst_typed[dst_id] = (Dst)src_typed[dst_id];
+            sycl::range<1> r{ne00 * ne01 * ne02};
+            h.parallel_for(r, [=](sycl::item<1> idx) {
+                dst_typed[idx] = (Dst) src_typed[idx];
             });
-    });
+        });
     } else {
         return queue.submit([&](sycl::handler& h) {
+            sycl::range<3> r{ne00, ne01, ne02};
             h.parallel_for(r, [=](sycl::item<3> idx) {
                 auto i00 = idx.get_id(0);
                 auto i01 = idx.get_id(1);
                 auto i02 = idx.get_id(2);
                 auto dst_id = i00 + i01*ne00 + i02*ne00*ne01;
                 auto src_ptr = (const Src*) ((const char *) src + i00*nb00 + i01*nb01 + i02*nb02);
-                dst_typed[dst_id] = (Dst)*src_ptr;
+                dst_typed[dst_id] = (Dst) *src_ptr;
             });
         });
     }
@@ -326,7 +323,6 @@ static bool check_strides(const ggml_tensor * tensor) {
 }
 
 static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, bool dry_run) {
-    // printf("matmul_f16_f32_f32 %d\n", (int)checkStrides(src0));
     if (!check_strides(src0))
         return false;
 
