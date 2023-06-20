@@ -324,8 +324,8 @@ static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, co
     auto scratch = (char *) g.lctx->get_scratch(scratch_size);
     for (int64_t i03 = 0; i03 < ne03; i03++) {
         auto x  = (sycl::half *) ((char *) src0->data + i03*nb03);
-        auto y  =      (float *) ((char *) src1->data+ i03*nb13);
-        auto sc = (sycl::half *) (scratch + i03*scratch_local_size);
+        auto y  =      (float *) ((char *) src1->data + i03*nb13);
+        auto sc = (sycl::half *) (scratch + i03*scratch_batch_size);
 
         deps.emplace_back(
             convert_type_3d<float, sycl::half>(queue, y, sc, ne10, ne11, ne02,
@@ -341,6 +341,7 @@ static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, co
                      x, nb01 / sizeof(sycl::half), nb02 / sizeof(sycl::half),
             0.0f,    d, ne01, nb2 / sizeof(float),
             ne02,
+            oneapi::mkl::blas::compute_mode::standard,
             deps);
         deps.clear();
     }
