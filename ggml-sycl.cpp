@@ -1,5 +1,8 @@
 #include "ggml-sycl.h"
 
+#define restrict __restrict__
+#include "k_quants.h"
+
 #include <cstdio>
 #include <algorithm>
 #include <cassert>
@@ -9,6 +12,8 @@
 
 #include <CL/sycl.hpp>
 #include <oneapi/mkl.hpp>
+
+#define FORCE_INLINE __attribute__((always_inline))
 
 static auto get_device_selector(std::string deviceName) {
   using Sel = sycl::ext::oneapi::filter_selector;
@@ -182,15 +187,21 @@ extern "C" void ggml_sycl_init() {
 }
 
 static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, bool dry_run);
+static bool matmul_q_f32_f32(global_context& ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, bool dry_run);
 
 static bool ggml_sycl_mul_mat_impl(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst, bool dry_run) {
+    if (src1->type != GGML_TYPE_F32 || dst->type != GGML_TYPE_F32)
+        return false;
+
     return catch_all([&]() {
-        auto checkTypes = [&](ggml_type a, ggml_type b, ggml_type c) {
-            return src0->type == a && src1->type == b && dst->type == c;
-        };
-#define T(a) GGML_TYPE_##a
-    if (checkTypes(T(F16), T(F32), T(F32))) return matmul_f16_f32_f32(get_context(), src0, src1, dst, dry_run);
-#undef T
+        if (src0->type == GGML_TYPE_F16) {
+            return matmul_f16_f32_f32(get_context(), src0, src1, dst, dry_run);
+        }
+
+        if (ggml_is_quantized(src0->type)) {
+            return matmul_q_f32_f32(get_context(), src0, src1, dst, dry_run);
+        }
+
         return false;
     });
 }
@@ -255,7 +266,7 @@ extern "C" void ggml_sycl_transform_tensor(void * data, struct ggml_tensor * ten
 
 template<typename Src, typename Dst>
 static sycl::event convert_type_3d(
-        sycl::queue queue, const void* src, void* dst,
+        sycl::queue queue, const void* restrict src, void* restrict dst,
         int64_t ne00, int64_t ne01, int64_t ne02, int64_t nb00, int64_t nb01, int64_t nb02) {
     bool c1 = (nb00 == sizeof(Src));
     bool c2 = (nb01 == sizeof(Src) * ne00);
@@ -284,7 +295,6 @@ static sycl::event convert_type_3d(
             });
         });
     }
-
 }
 
 // static uint32_t tensor_hash(const ggml_tensor * src) {
@@ -410,5 +420,194 @@ static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, co
 
     queue.wait();
     // printf("%x\n", tensor_hash(dst));
+    return true;
+}
+
+FORCE_INLINE static sycl::half to_half(ggml_fp16_t src) {
+    union {
+        ggml_fp16_t a;
+        sycl::half b;
+    };
+    a = src;
+    return b;
+}
+
+// static void dequantize_row_q6_K(const block_q6_K * restrict x, float * restrict y, int k) {
+//     assert(k % QK_K == 0);
+//     const int nb = k / QK_K;
+
+//     for (int i = 0; i < nb; i++) {
+
+//         const float d = ggml_fp16_to_fp32(x[i].d);
+
+//         const uint8_t * restrict ql = x[i].ql;
+//         const uint8_t * restrict qh = x[i].qh;
+//         const int8_t  * restrict sc = x[i].scales;
+
+//         for (int n = 0; n < QK_K; n += 128) {
+//             for (int l = 0; l < 32; ++l) {
+//                 int is = l/16;
+//                 const int8_t q1 = (int8_t)((ql[l +  0] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
+//                 const int8_t q2 = (int8_t)((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
+//                 const int8_t q3 = (int8_t)((ql[l +  0]  >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
+//                 const int8_t q4 = (int8_t)((ql[l + 32]  >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
+//                 y[l +  0] = d * sc[is + 0] * q1;
+//                 y[l + 32] = d * sc[is + 2] * q2;
+//                 y[l + 64] = d * sc[is + 4] * q3;
+//                 y[l + 96] = d * sc[is + 6] * q4;
+//             }
+//             y  += 128;
+//             ql += 64;
+//             qh += 32;
+//             sc += 8;
+//         }
+
+//     }
+// }
+
+namespace {
+struct dequantize_q6_K {
+    FORCE_INLINE void operator()(const void * restrict src, sycl::half * restrict y, int i) const {
+        const auto* x = (const block_q6_K *)src;
+        const sycl::half d = to_half(x[i].d);
+
+        const uint8_t * restrict ql = x[i].ql;
+        const uint8_t * restrict qh = x[i].qh;
+        const int8_t  * restrict sc = x[i].scales;
+
+        for (int n = 0; n < QK_K; n += 128) {
+            for (int l = 0; l < 32; ++l) {
+                int is = l/16;
+                const int8_t q1 = (int8_t)((ql[l +  0] & 0xF) | (((qh[l] >> 0) & 3) << 4)) - 32;
+                const int8_t q2 = (int8_t)((ql[l + 32] & 0xF) | (((qh[l] >> 2) & 3) << 4)) - 32;
+                const int8_t q3 = (int8_t)((ql[l +  0]  >> 4) | (((qh[l] >> 4) & 3) << 4)) - 32;
+                const int8_t q4 = (int8_t)((ql[l + 32]  >> 4) | (((qh[l] >> 6) & 3) << 4)) - 32;
+                y[l +  0] = d * sc[is + 0] * q1;
+                y[l + 32] = d * sc[is + 2] * q2;
+                y[l + 64] = d * sc[is + 4] * q3;
+                y[l + 96] = d * sc[is + 6] * q4;
+            }
+            y  += 128;
+            ql += 64;
+            qh += 32;
+            sc += 8;
+        }
+    }
+};
+}
+
+template<typename Handler>
+static sycl::event dequantize_k(
+        sycl::queue queue, const void* restrict src, void* restrict dst,
+        int64_t ne00, int64_t ne01, int64_t ne02, int64_t nb00, int64_t nb01, int64_t nb02) {
+    auto dst_typed = static_cast<sycl::half*>(dst);
+
+    assert(ne00 % QK_K == 0);
+    auto len = ne00 / QK_K;
+    return queue.submit([&](sycl::handler& h) {
+        sycl::range<3> r{len, ne01, ne02};
+        h.parallel_for(r, [=](sycl::item<3> idx) {
+            auto i00 = idx.get_id(0);
+            auto i01 = idx.get_id(1);
+            auto i02 = idx.get_id(2);
+            auto dst_ptr = dst_typed + i01*ne00 + i02*ne00*ne01;
+            auto src_ptr = ((const char *) src + i01*nb01 + i02*nb02);
+            Handler()(src_ptr, dst_ptr, i00);
+        });
+    });
+}
+
+static const constexpr auto dequantize_funcs = []() {
+    using func_t = sycl::event(*)(sycl::queue, const void*, void*, int64_t, int64_t, int64_t, int64_t, int64_t, int64_t);
+    std::array<func_t, GGML_TYPE_COUNT> ret = {};
+    ret[GGML_TYPE_Q6_K] = &dequantize_k<dequantize_q6_K>;
+    return ret;
+}();
+
+static bool matmul_q_f32_f32(global_context& ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, bool dry_run) {
+    auto func = dequantize_funcs[src0->type];
+    if (!func)
+        return false;
+
+    if (dry_run)
+        return true;
+
+    const auto ne00 = src0->ne[0];
+    const auto ne01 = src0->ne[1];
+    const auto ne02 = src0->ne[2];
+    const auto ne03 = src0->ne[3];
+
+    const auto ne10 = src1->ne[0];
+    const auto ne11 = src1->ne[1];
+    const auto ne12 = src1->ne[2];
+    const auto ne13 = src1->ne[3];
+
+    const auto ne0  = dst->ne[0];
+    const auto ne1  = dst->ne[1];
+    const auto ne2  = dst->ne[2];
+    const auto ne3  = dst->ne[3];
+
+    (void)ne00;(void)ne01;(void)ne02;(void)ne03;
+    (void)ne10;(void)ne11;(void)ne12;(void)ne13;
+    (void)ne0 ;(void)ne1 ;(void)ne2 ;(void)ne3;
+
+    const auto nb00 = src0->nb[0];
+    const auto nb01 = src0->nb[1];
+    const auto nb02 = src0->nb[2];
+    const auto nb03 = src0->nb[3];
+
+    const auto nb10 = src1->nb[0];
+    const auto nb11 = src1->nb[1];
+    const auto nb12 = src1->nb[2];
+    const auto nb13 = src1->nb[3];
+
+    const auto nb0  = dst->nb[0];
+    const auto nb1  = dst->nb[1];
+    const auto nb2  = dst->nb[2];
+    const auto nb3  = dst->nb[3];
+
+    (void)nb00;(void)nb01;(void)nb02;(void)nb03;
+    (void)nb10;(void)nb11;(void)nb12;(void)nb13;
+    (void)nb0 ;(void)nb1 ;(void)nb2 ;(void)nb3 ;
+
+    local_context_guard g(ctx);
+    auto &queue = g.lctx->queue;
+    auto &deps = g.lctx->deps;
+    assert(deps.empty());
+
+    const int64_t scratch_local_size0 = ne00 * ne01 * sizeof(sycl::half);
+    const int64_t scratch_local_size1 = ne10 * ne11 * sizeof(sycl::half);
+    const int64_t scratch_local_size = scratch_local_size0 + scratch_local_size1;
+    const int64_t scratch_batch_size = scratch_local_size * ne02;
+    const int64_t scratch_size = scratch_batch_size * ne03;
+    auto scratch = (char *) g.lctx->get_scratch(scratch_size);
+    for (int64_t i03 = 0; i03 < ne03; i03++) {
+        auto x  =                ((char *) src0->data + i03*nb03);
+        auto y  =      (float *) ((char *) src1->data + i03*nb13);
+        auto sc0 = (sycl::half *) (scratch + i03*scratch_batch_size);
+        auto sc1 = (sycl::half *) (scratch + i03*scratch_batch_size + scratch_local_size0);
+
+        deps.emplace_back(func(queue, x, sc0, ne00, ne01, ne02, nb00, nb01, nb02));
+
+        deps.emplace_back(
+            convert_type_3d<float, sycl::half>(queue, y, sc1, ne10, ne11, ne02,
+                                               nb10, nb11, nb12));
+
+        float * d = (float *) ((char *) dst->data + i03*nb3);
+        namespace blas = oneapi::mkl::blas::row_major;
+        blas::gemm_batch(queue,
+            oneapi::mkl::transpose::N,
+            oneapi::mkl::transpose::T,
+            ne11, ne01, ne10,
+            1.0f,  sc1, ne10, scratch_local_size / sizeof(sycl::half),
+                   sc0, ne01, scratch_local_size / sizeof(sycl::half),
+            0.0f,    d, ne01, nb2 / sizeof(float),
+            ne02,
+            oneapi::mkl::blas::compute_mode::standard,
+            deps);
+        deps.clear();
+    }
+
+    queue.wait();
     return true;
 }

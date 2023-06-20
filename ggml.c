@@ -10456,6 +10456,15 @@ static void ggml_compute_forward_mul_mat_q_f32(
     }
 #endif
 
+#if defined(GGML_USE_SYCL)
+    if (ggml_sycl_can_mul_mat(src0, src1, dst)) {
+        if (params->ith == 0 && params->type == GGML_TASK_COMPUTE) {
+            ggml_sycl_mul_mat(src0, src1, dst, params->wdata, params->wsize);
+        }
+        return;
+    }
+#endif
+
 #if defined(GGML_USE_ACCELERATE) || defined(GGML_USE_OPENBLAS)
     if (ggml_compute_forward_mul_mat_use_blas(src0, src1, dst)) {
         if (params->ith != 0) {
