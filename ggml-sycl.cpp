@@ -253,35 +253,46 @@ static bool matmul_f16_f32_f32(Context& ctx, const ggml_tensor * src0, const ggm
     if (!checkStrides(src0))
         return false;
 
-    const int64_t ne00 = src0->ne[0];
-    const int64_t ne01 = src0->ne[1];
-    const int64_t ne02 = src0->ne[2];
-    const int64_t ne03 = src0->ne[3];
+    const auto ne00 = src0->ne[0];
+    const auto ne01 = src0->ne[1];
+    const auto ne02 = src0->ne[2];
+    const auto ne03 = src0->ne[3];
 
-    const int64_t ne10 = src1->ne[0];
-    const int64_t ne11 = src1->ne[1];
-    const int64_t ne12 = src1->ne[2];
-    const int64_t ne13 = src1->ne[3];
+    const auto ne10 = src1->ne[0];
+    const auto ne11 = src1->ne[1];
+    const auto ne12 = src1->ne[2];
+    const auto ne13 = src1->ne[3];
 
-    const int64_t ne0  = dst->ne[0];
-    const int64_t ne1  = dst->ne[1];
-    const int64_t ne2  = dst->ne[2];
-    const int64_t ne3  = dst->ne[3];
+    const auto ne0  = dst->ne[0];
+    const auto ne1  = dst->ne[1];
+    const auto ne2  = dst->ne[2];
+    const auto ne3  = dst->ne[3];
 
-    const int nb00 = src0->nb[0];
-    const int nb01 = src0->nb[1];
-    const int nb02 = src0->nb[2];
-    const int nb03 = src0->nb[3];
+    (void)ne00;(void)ne01;(void)ne02;(void)ne03;
+    (void)ne10;(void)ne11;(void)ne12;(void)ne13;
+    (void)ne0 ;(void)ne1 ;(void)ne2 ;(void)ne3;
 
-    const int nb10 = src1->nb[0];
-    const int nb11 = src1->nb[1];
-    const int nb12 = src1->nb[2];
-    const int nb13 = src1->nb[3];
+    const auto nb00 = src0->nb[0];
+    const auto nb01 = src0->nb[1];
+    const auto nb02 = src0->nb[2];
+    const auto nb03 = src0->nb[3];
 
-    const int nb0  = dst->nb[0];
-    const int nb1  = dst->nb[1];
-    const int nb2  = dst->nb[2];
-    const int nb3  = dst->nb[3];
+    const auto nb10 = src1->nb[0];
+    const auto nb11 = src1->nb[1];
+    const auto nb12 = src1->nb[2];
+    const auto nb13 = src1->nb[3];
+
+    const auto nb0  = dst->nb[0];
+    const auto nb1  = dst->nb[1];
+    const auto nb2  = dst->nb[2];
+    const auto nb3  = dst->nb[3];
+
+    (void)nb00;(void)nb01;(void)nb02;(void)nb03;
+    (void)nb10;(void)nb11;(void)nb12;(void)nb13;
+    (void)nb0 ;(void)nb1 ;(void)nb2 ;(void)nb3 ;
+
+    // if (ne11 * ne01 * ne10 < 32*32*32)
+    //     return false;
 
     const int64_t scratchLocalSize = ne10 * ne11 * sizeof(sycl::half);
     const int64_t scratchSize = scratchLocalSize * ne02 * ne03;
