@@ -10,13 +10,13 @@
 #include <CL/sycl.hpp>
 #include <oneapi/mkl.hpp>
 
-static auto getDeviceSelector(std::string deviceName) {
+static auto get_device_selector(std::string deviceName) {
   using Sel = sycl::ext::oneapi::filter_selector;
   return [selector = Sel(std::move(deviceName))](
              const sycl::device &dev) -> int { return selector(dev); };
 }
 
-template <typename F> static auto catchAll(F &&func) {
+template <typename F> static auto catch_all(F &&func) {
   try {
     return func();
   } catch (const std::exception &e) {
@@ -30,7 +30,7 @@ template <typename F> static auto catchAll(F &&func) {
   }
 }
 
-static size_t nextPow2(size_t v) {
+static size_t next_pow2(size_t v) {
     v--;
     v |= v >> 1;
     v |= v >> 2;
@@ -81,44 +81,44 @@ static void* alloc_device(sycl::queue& queue, size_t size, size_t align) {
 
 
 namespace {
-struct LocalContext;
-struct Context {
-    Context() {
+struct local_context;
+struct global_context {
+    global_context() {
         // TODO: Unhardcode deivce
-        device = sycl::device{getDeviceSelector("level_zero:gpu:0")};
+        device = sycl::device{get_device_selector("level_zero:gpu:0")};
         queue = sycl::queue{device};
     }
 
-    LocalContext* getContext();
-    void returnContext(LocalContext* ctx);
+    local_context* get_context();
+    void return_context(local_context* ctx);
 
     sycl::device device;
     sycl::queue queue;
     std::atomic<int> requestsInFlight{0};
     std::mutex lock;
-    std::unique_ptr<LocalContext> lctx;
+    std::unique_ptr<local_context> lctx;
 };
 
-struct LocalContext {
-    LocalContext(Context& ctx) {
+struct local_context {
+    local_context(global_context& ctx) {
         queue = sycl::queue{ctx.queue.get_context(), ctx.device};
     }
-    ~LocalContext() {
-        freeScratch();
+    ~local_context() {
+        free_scratch();
     }
 
-    void* getScratch(size_t size) {
+    void* get_scratch(size_t size) {
         if (size <= scratchSize)
             return scratch;
 
-        size = nextPow2(size);
-        freeScratch();
+        size = next_pow2(size);
+        free_scratch();
         scratch = alloc_device(queue, size, 0);
         scratchSize = size;
         return scratch;
     }
 
-    void freeScratch() {
+    void free_scratch() {
         if (scratch) {
             sycl::free(scratch, queue);
             scratch = nullptr;
@@ -129,20 +129,20 @@ struct LocalContext {
     std::vector<sycl::event> deps;
     void* scratch = nullptr;
     size_t scratchSize = 0;
-    std::unique_ptr<LocalContext> next;
+    std::unique_ptr<local_context> next;
 };
 
-LocalContext* Context::getContext() {
+local_context* global_context::get_context() {
     std::unique_lock<std::mutex> l(lock); // TODO: atomics?
     if (!lctx)
-        return new LocalContext(*this);
+        return new local_context(*this);
 
     auto ret = lctx.release();
     lctx = std::move(ret->next);
     return ret;
 }
 
-void Context::returnContext(LocalContext* ctx) {
+void global_context::return_context(local_context* ctx) {
     assert(ctx && "Invalid local context");
     assert(!ctx.next && "Invalid local context next");
     ctx->deps.clear();
@@ -151,58 +151,57 @@ void Context::returnContext(LocalContext* ctx) {
     lctx.reset(ctx);
 }
 
-struct LocalContextGuard {
-    LocalContextGuard(Context& c): ctx(c) {
+struct local_context_guard {
+    local_context_guard(global_context& c): ctx(c) {
         ++ctx.requestsInFlight;
-        lctx = ctx.getContext();
+        lctx = ctx.get_context();
         assert(lctx);
     }
-    ~LocalContextGuard() {
+    ~local_context_guard() {
         assert(lctx);
-        ctx.returnContext(lctx);
+        ctx.return_context(lctx);
         --ctx.requestsInFlight;
     }
 
-    Context& ctx;
-    LocalContext* lctx = nullptr;
+    global_context& ctx;
+    local_context* lctx = nullptr;
 };
 }
 
-static Context* context = nullptr;
-static Context& getContext() {
-    assert(context && "Context is not initialized");
-    return *context;
+static global_context* g_context = nullptr;
+static global_context& get_context() {
+    assert(g_context && "Context is not initialized");
+    return *g_context;
 }
 
 extern "C" void ggml_sycl_init() {
-    assert(!context && "Context is already initialized");
-    catchAll([&]() {
-        context = new Context;
+    assert(!g_context && "Context is already initialized");
+    catch_all([&]() {
+        g_context = new global_context;
     });
 }
 
-static bool matmul_f16_f32_f32(Context& ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, void * wdata, size_t wsize);
+static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, void * wdata, size_t wsize);
 
 extern "C" bool ggml_sycl_mul_mat(const struct ggml_tensor * src0, const struct ggml_tensor * src1, struct ggml_tensor * dst, void * wdata, size_t wsize) {
-    assert(context && "Context is not initialized");
-    return catchAll([&]() {
+    return catch_all([&]() {
         auto checkTypes = [&](ggml_type a, ggml_type b, ggml_type c) {
             return src0->type == a && src1->type == b && dst->type == c;
         };
 #define T(a) GGML_TYPE_##a
-    if (checkTypes(T(F16), T(F32), T(F32))) return matmul_f16_f32_f32(getContext(), src0, src1, dst, wdata, wsize);
+    if (checkTypes(T(F16), T(F32), T(F32))) return matmul_f16_f32_f32(get_context(), src0, src1, dst, wdata, wsize);
 #undef T
         return false;
     });
 }
 
 extern "C" void* ggml_sycl_alloc_shared(size_t size, size_t align) {
-    return alloc_shared(getContext().queue, size, align);
+    return alloc_shared(get_context().queue, size, align);
 }
 
 extern "C" void ggml_sycl_free(void* ptr) {
     if (ptr) {
-        sycl::free(ptr, getContext().queue);
+        sycl::free(ptr, get_context().queue);
     }
 }
 
@@ -216,8 +215,8 @@ extern "C" void ggml_sycl_transform_tensor(void * data, struct ggml_tensor * ten
     const ggml_type type = tensor->type;
     const size_t size = ggml_type_size(type) * ne0 * ne1 * ne2 * ne3 / ggml_blck_size(type);
 
-    auto &ctx = getContext();
-    return catchAll([&]() {
+    auto &ctx = get_context();
+    return catch_all([&]() {
         auto mem = sycl::malloc_shared(size, ctx.queue);
         if (!mem) {
             fprintf(stderr, "SYCL: Failed to allocate shared memory\n");
@@ -230,27 +229,29 @@ extern "C" void ggml_sycl_transform_tensor(void * data, struct ggml_tensor * ten
 }
 
 template<typename Src, typename Dst>
-static sycl::event convertType2d(sycl::queue queue, const void* src, void* dst, int64_t ne00, int64_t ne01, int64_t nb00, int64_t nb01) {
-    auto dstTyped = static_cast<Dst*>(dst);
+static sycl::event convert_type_2d(
+        sycl::queue queue, const void* src, void* dst, int64_t ne00,
+        int64_t ne01, int64_t nb00, int64_t nb01) {
+    auto dst_typed = static_cast<Dst*>(dst);
     return queue.submit([&](sycl::handler& h) {
         sycl::range<2> r{ne00, ne01};
         h.parallel_for(r, [=](sycl::item<2> idx) {
             auto i00 = idx.get_id(0);
             auto i01 = idx.get_id(1);
-            auto dstId = i00 + i01 * ne00;
-            dstTyped[dstId] = (Dst)*(Src*) ((const char *) src + i01*nb01 + i00*nb00);
+            auto dst_id = i00 + i01 * ne00;
+            dst_typed[dst_id] = (Dst)*(Src*) ((const char *) src + i01*nb01 + i00*nb00);
         });
     });
 }
 
 
-static bool checkStrides(const ggml_tensor * tensor) {
+static bool check_strides(const ggml_tensor * tensor) {
     return tensor->nb[0] == ggml_type_size(tensor->type);
 }
 
-static bool matmul_f16_f32_f32(Context& ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, void * wdata, size_t wsize) {
+static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, void * wdata, size_t wsize) {
     // printf("matmul_f16_f32_f32 %d\n", (int)checkStrides(src0));
-    if (!checkStrides(src0))
+    if (!check_strides(src0))
         return false;
 
     const auto ne00 = src0->ne[0];
@@ -294,22 +295,24 @@ static bool matmul_f16_f32_f32(Context& ctx, const ggml_tensor * src0, const ggm
     // if (ne11 * ne01 * ne10 < 32*32*32)
     //     return false;
 
-    const int64_t scratchLocalSize = ne10 * ne11 * sizeof(sycl::half);
-    const int64_t scratchSize = scratchLocalSize * ne02 * ne03;
+    const int64_t scratch_local_size = ne10 * ne11 * sizeof(sycl::half);
+    const int64_t scratch_size = scratch_local_size * ne02 * ne03;
 
-    LocalContextGuard g(ctx);
+    local_context_guard g(ctx);
     auto &queue = g.lctx->queue;
     auto &deps = g.lctx->deps;
     assert(deps.empty());
 
-    auto scratch = (char *) g.lctx->getScratch(scratchSize);
+    auto scratch = (char *) g.lctx->get_scratch(scratch_size);
     for (int64_t i03 = 0; i03 < ne03; i03++) {
         for (int64_t i02 = 0; i02 < ne02; i02++) {
             auto x  = (sycl::half *) ((char *) src0->data + i02*nb02 + i03*nb03);
             auto y  =      (float *) ((char *) src1->data + i02*nb12 + i03*nb13);
-            auto sc = (sycl::half *) (scratch + i02*scratchLocalSize + i03*ne02*scratchLocalSize);
+            auto sc = (sycl::half *) (scratch + i02*scratch_local_size + i03*ne02*scratch_local_size);
 
-            deps.emplace_back(convertType2d<float, sycl::half>(queue, y, sc, ne10, ne11, nb10, nb11));
+            deps.emplace_back(
+                convert_type_2d<float, sycl::half>(queue, y, sc, ne10, ne11,
+                                                   nb10, nb11));
 
             float * d = (float *) ((char *) dst->data + i02*nb2 + i03*nb3);
             namespace blas = oneapi::mkl::blas::row_major;
