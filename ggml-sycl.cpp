@@ -78,7 +78,6 @@ struct LocalContext {
 
         size = nextPow2(size);
         freeScratch();
-        printf("malloc device %d\n", (int)size);
         scratch = sycl::malloc_device(size, queue);
         if (!scratch) {
             fprintf(stderr, "SYCL: Failed to allocate scratch memory\n");
@@ -146,7 +145,6 @@ static Context& getContext() {
 }
 
 extern "C" void ggml_sycl_init() {
-    printf("ggml_sycl_init\n");
     assert(!context && "Context is already initialized");
     catchAll([&]() {
         context = new Context;
