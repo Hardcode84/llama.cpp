@@ -273,6 +273,36 @@ static sycl::event convert_type_3d(
     });
 }
 
+// static uint32_t tensor_hash(const ggml_tensor * src) {
+//     const auto ne00 = src->ne[0];
+//     const auto ne01 = src->ne[1];
+//     const auto ne02 = src->ne[2];
+//     const auto ne03 = src->ne[3];
+
+//     const auto nb00 = src->nb[0];
+//     const auto nb01 = src->nb[1];
+//     const auto nb02 = src->nb[2];
+//     const auto nb03 = src->nb[3];
+
+//     const auto ts = ggml_type_size(src->type);
+
+//     uint32_t sum = 0;
+//     for (int64_t i03 = 0; i03 < ne03; i03++) {
+//         for (int64_t i02 = 0; i02 < ne02; i02++) {
+//             for (int64_t i01 = 0; i01 < ne01; i01++) {
+//                 for (int64_t i00 = 0; i00 < ne00; i00++) {
+//                     auto data = ((uint8_t *) src->data + i00*nb00 + i01*nb01 + i02*nb02 + i03*nb03);
+//                     for (int i = 0; i < ts; i++) {
+//                         auto byte = *(data + ts);
+//                         sum = byte + (sum << 6) + (sum << 16) - sum;
+//                     }
+//                 }
+//             }
+//         }
+//     }
+//     return sum;
+// }
+
 
 static bool check_strides(const ggml_tensor * tensor) {
     return tensor->nb[0] == ggml_type_size(tensor->type);
@@ -285,6 +315,7 @@ static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, co
 
     if (dry_run)
         return true;
+
     const auto ne00 = src0->ne[0];
     const auto ne01 = src0->ne[1];
     const auto ne02 = src0->ne[2];
@@ -323,6 +354,9 @@ static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, co
     (void)nb10;(void)nb11;(void)nb12;(void)nb13;
     (void)nb0 ;(void)nb1 ;(void)nb2 ;(void)nb3 ;
 
+    // printf("asdasd %d %zu %zu %zu %zu\t%zu %zu %zu %zu\n", (int)ggml_is_contiguous(dst), ne0, ne1, ne2, ne3, nb0, nb1, nb2, nb3);
+    // printf("%zu\t%zu\n", ne01, nb1 / sizeof(float));
+
     // if (ne11 * ne01 * ne10 < 32*32*32)
     //     return false;
 
@@ -330,6 +364,8 @@ static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, co
     auto &queue = g.lctx->queue;
     auto &deps = g.lctx->deps;
     assert(deps.empty());
+
+    // printf("%x\t%x\t", tensor_hash(src0), tensor_hash(src1));
 
 #if BATCH_GEMM
     const int64_t scratch_local_size = ne10 * ne11 * sizeof(sycl::half);
@@ -388,5 +424,6 @@ static bool matmul_f16_f32_f32(global_context& ctx, const ggml_tensor * src0, co
     }
 #endif
     queue.wait();
+    // printf("%x\n", tensor_hash(dst));
     return true;
 }
