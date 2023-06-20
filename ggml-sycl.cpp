@@ -257,17 +257,33 @@ template<typename Src, typename Dst>
 static sycl::event convert_type_3d(
         sycl::queue queue, const void* src, void* dst,
         int64_t ne00, int64_t ne01, int64_t ne02, int64_t nb00, int64_t nb01, int64_t nb02) {
+    bool c1 = (nb00 == sizeof(Src));
+    bool c2 = (nb01 == sizeof(Src) * ne00);
+    bool c3 = (nb02 == sizeof(Src) * ne00 * ne01);
+    bool is_contigious = c1 && c2 && c3;
+
     auto dst_typed = static_cast<Dst*>(dst);
     return queue.submit([&](sycl::handler& h) {
         sycl::range<3> r{ne00, ne01, ne02};
-        h.parallel_for(r, [=](sycl::item<3> idx) {
-            auto i00 = idx.get_id(0);
-            auto i01 = idx.get_id(1);
-            auto i02 = idx.get_id(2);
-            auto dst_id = i00 + i01*ne00 + i02*ne00*ne01;
-            auto src_ptr = (const Src*) ((const char *) src + i00*nb00 + i01*nb01 + i02*nb02);
-            dst_typed[dst_id] = (Dst)*src_ptr;
-        });
+        if (is_contigious) {
+            auto src_typed = static_cast<const Src*>(src);
+            h.parallel_for(r, [=](sycl::item<3> idx) {
+                auto i00 = idx.get_id(0);
+                auto i01 = idx.get_id(1);
+                auto i02 = idx.get_id(2);
+                auto dst_id = i00 + i01*ne00 + i02*ne00*ne01;
+                dst_typed[dst_id] = (Dst)src_typed[dst_id];
+            });
+        } else {
+            h.parallel_for(r, [=](sycl::item<3> idx) {
+                auto i00 = idx.get_id(0);
+                auto i01 = idx.get_id(1);
+                auto i02 = idx.get_id(2);
+                auto dst_id = i00 + i01*ne00 + i02*ne00*ne01;
+                auto src_ptr = (const Src*) ((const char *) src + i00*nb00 + i01*nb01 + i02*nb02);
+                dst_typed[dst_id] = (Dst)*src_ptr;
+            });
+        }
     });
 }
 
